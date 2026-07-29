@@ -204,7 +204,7 @@ st.subheader("🔴 Active Incidents Detail")
 if len(incidents_df) > 0:
     display_df = store.get_active_incidents()
     st.dataframe(
-        display_df.to_pandas(),
+        display_df,
         use_container_width=True,
         hide_index=True,
         column_config={

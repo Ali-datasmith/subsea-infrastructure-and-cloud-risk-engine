@@ -1,0 +1,32 @@
+# DuckDB database files
+data/*.duckdb
+data/*.duckdb.wal
+
+# Quarantined payloads
+data/quarantine/*.json
+
+# Logs
+logs/
+
+# Environment secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

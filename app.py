@@ -111,5 +111,6 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":
-    main()
+# Run unconditionally — Streamlit Cloud does NOT execute this as __main__,
+# so the previous `if __name__ == "__main__"` guard left the home page blank.
+main()

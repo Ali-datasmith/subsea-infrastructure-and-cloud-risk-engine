@@ -1,0 +1,40 @@
+[project]
+name = "subsea-risk-engine"
+version = "1.0.0"
+description = "Subsea Infrastructure & Cloud Risk Engine — decision-support dashboard"
+requires-python = ">=3.10"
+dependencies = [
+    "polars[pyarrow]>=1.18",
+    "duckdb>=1.5.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pandera[polars]>=0.21",
+    "google-genai>=0.5",
+    "pydeck>=0.9",
+    "streamlit>=1.40",
+    "httpx>=0.27",
+    "tenacity>=9.0",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

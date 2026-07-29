@@ -29,6 +29,41 @@ class RiskEngineStore:
         self._load_extensions()
         logger.info("DuckDB connected at {} with spatial + h3 extensions", settings.duckdb_path)
 
+    def _load_extensions(self) -> None:
+        """
+        Load DuckDB extensions with full resilience for ephemeral Cloud containers.
+        - spatial (official repo) is REQUIRED for GEOMETRY types.
+        - h3 (community repo) is OPTIONAL; gated behind allow_community_extensions
+          and wrapped so a download hiccup never crashes app startup.
+        """
+        try:
+            self._con.execute("INSTALL spatial")
+        except Exception as exc:
+            logger.warning("spatial INSTALL note (may already be cached): {}", exc)
+        self._con.execute("LOAD spatial")
+        logger.info("DuckDB spatial extension loaded")
+
+        for flag_stmt in (
+            "SET allow_community_extensions = true",
+            "SET allow_unsigned_extensions = true",
+        ):
+            try:
+                self._con.execute(flag_stmt)
+            except Exception as exc:
+                logger.debug("Extension flag not applicable on this build: {}", exc)
+
+        try:
+            self._con.execute("INSTALL h3 FROM community")
+        except Exception as exc:
+            logger.warning("h3 INSTALL skipped (community repo unreachable): {}", exc)
+        try:
+            self._con.execute("LOAD h3")
+            self._h3_available = True
+            logger.info("DuckDB h3 extension loaded")
+        except Exception as exc:
+            self._h3_available = False
+            logger.warning("h3 LOAD skipped — H3HexagonLayer will render empty: {}", exc)
+
     @property
     def connection(self) -> duckdb.DuckDBPyConnection:
         return self._con
@@ -46,7 +81,6 @@ class RiskEngineStore:
     # =========================================================================
     # Incident upsert (zero-copy Arrow from Polars)
     # =========================================================================
-
     def upsert_incidents(self, incidents: list[CableIncidentPayload]) -> int:
         """
         Convert validated Pydantic models → Polars DataFrame → DuckDB via Arrow.
@@ -116,7 +150,6 @@ class RiskEngineStore:
     # =========================================================================
     # Latency metrics upsert
     # =========================================================================
-
     def upsert_latency_metrics(self, metrics: list[CloudLatencyMetric]) -> int:
         """Insert cloud latency metrics via Polars → Arrow → DuckDB."""
         if not metrics:
@@ -154,7 +187,6 @@ class RiskEngineStore:
     # =========================================================================
     # Risk brief persistence
     # =========================================================================
-
     def persist_risk_brief(self, brief: GeminiRiskBrief, raw_response: str) -> None:
         """Store a validated Gemini risk brief with full raw audit trail."""
         actions_json = json.dumps([a.model_dump(mode="json") for a in brief.recommended_actions])
@@ -193,11 +225,10 @@ class RiskEngineStore:
     # =========================================================================
     # Spatial join: incidents → nearest cloud regions
     # =========================================================================
-
     def spatial_join_incidents_to_regions(self) -> pl.DataFrame:
         """
         Execute ST_DWithin spatial join: each incident matched to cloud regions
-        within the configured radius. Returns Polars DataFrame via Arrow.
+        within the configured radius. Returns Polars DataFrame via Arrow (no pandas).
         """
         radius_m = self._settings.spatial_join_radius_km * 1000.0
         result = self._con.execute(
@@ -223,50 +254,58 @@ class RiskEngineStore:
             ORDER BY ci.detected_at DESC, distance_km ASC
             """
         )
-        df = result.fetchdf()
-        pl_df = pl.from_pandas(df) if len(df) > 0 else pl.DataFrame()
+        arrow_table = result.fetch_arrow_table()
+        pl_df = pl.from_arrow(arrow_table)
+        if pl_df is None:
+            pl_df = pl.DataFrame()
         logger.info("Spatial join returned {} incident-region pairs", len(pl_df))
         return pl_df
 
     # =========================================================================
     # H3 risk zone materialization
     # =========================================================================
-
     def refresh_h3_risk_zones(self) -> int:
         """
         Rebuild h3_risk_zones from cable_incidents using H3 hexagonal indexing.
-        Aggregates incident count and max risk per H3 cell at configured resolution.
+        No-ops gracefully if the h3 extension could not be loaded on this host.
         """
+        if not self._h3_available:
+            logger.warning("h3 extension unavailable — skipping H3 zone refresh")
+            return 0
+
         resolution = self._settings.h3_resolution
-        self._con.execute("DELETE FROM h3_risk_zones")
-        self._con.execute(
-            f"""
-            INSERT INTO h3_risk_zones (h3_index, resolution, incident_count, max_risk_level, avg_anomaly_score, affected_cable_ids, computed_at)
-            SELECT
-                h3_latlng_to_cell(ST_Y(fault_location), ST_X(fault_location), {resolution}) AS h3_index,
-                {resolution} AS resolution,
-                COUNT(*) AS incident_count,
-                CASE
-                    WHEN SUM(CASE WHEN status = 'cut' THEN 1 ELSE 0 END) > 0 THEN 'critical'
-                    WHEN SUM(CASE WHEN status = 'under_repair' THEN 1 ELSE 0 END) > 0 THEN 'high'
-                    WHEN SUM(CASE WHEN status = 'degraded' THEN 1 ELSE 0 END) > 0 THEN 'medium'
-                    ELSE 'low'
-                END AS max_risk_level,
-                0.0 AS avg_anomaly_score,
-                LIST(DISTINCT cable_id) AS affected_cable_ids,
-                current_timestamp AS computed_at
-            FROM cable_incidents
-            GROUP BY h3_index
-            """
-        )
-        count = self._con.execute("SELECT COUNT(*) FROM h3_risk_zones").fetchone()[0]
-        logger.info("Refreshed h3_risk_zones: {} cells at resolution {}", count, resolution)
-        return count
+        try:
+            self._con.execute("DELETE FROM h3_risk_zones")
+            self._con.execute(
+                f"""
+                INSERT INTO h3_risk_zones (h3_index, resolution, incident_count, max_risk_level, avg_anomaly_score, affected_cable_ids, computed_at)
+                SELECT
+                    h3_latlng_to_cell(ST_Y(fault_location), ST_X(fault_location), {resolution}) AS h3_index,
+                    {resolution} AS resolution,
+                    COUNT(*) AS incident_count,
+                    CASE
+                        WHEN SUM(CASE WHEN status = 'cut' THEN 1 ELSE 0 END) > 0 THEN 'critical'
+                        WHEN SUM(CASE WHEN status = 'under_repair' THEN 1 ELSE 0 END) > 0 THEN 'high'
+                        WHEN SUM(CASE WHEN status = 'degraded' THEN 1 ELSE 0 END) > 0 THEN 'medium'
+                        ELSE 'low'
+                    END AS max_risk_level,
+                    0.0 AS avg_anomaly_score,
+                    LIST(DISTINCT cable_id) AS affected_cable_ids,
+                    current_timestamp AS computed_at
+                FROM cable_incidents
+                GROUP BY h3_index
+                """
+            )
+            count = self._con.execute("SELECT COUNT(*) FROM h3_risk_zones").fetchone()[0]
+            logger.info("Refreshed h3_risk_zones: {} cells at resolution {}", count, resolution)
+            return count
+        except Exception as exc:
+            logger.error("H3 refresh failed (non-fatal): {}", exc)
+            return 0
 
     # =========================================================================
     # Query helpers (return Polars DataFrames via Arrow)
     # =========================================================================
-
     def get_cables_with_endpoints(self) -> pl.DataFrame:
         """Retrieve cable arcs with source/target landing point coordinates."""
         result = self._con.execute(

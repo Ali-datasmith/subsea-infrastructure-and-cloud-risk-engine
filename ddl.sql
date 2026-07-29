@@ -1,22 +1,10 @@
-
----
-
-## `app/ddl.sql`
-
-```sql
 -- =============================================================================
 -- Subsea Infrastructure & Cloud Risk Engine — DuckDB DDL
--- Requires: DuckDB v1.5+, spatial extension, h3 community extension
+-- Extensions (spatial / h3) are loaded in Python (src/db_engine.py) BEFORE this
+-- script runs, so this file contains ONLY DDL + seed data. No INSTALL / LOAD here.
 -- =============================================================================
 
-INSTALL spatial;
-LOAD spatial;
-INSTALL h3 FROM community;
-LOAD h3;
-
--- =============================================================================
 -- 3.1 Subsea cable systems (route geometry as LINESTRING)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS subsea_cables (
     cable_id            VARCHAR PRIMARY KEY,
     cable_name          VARCHAR NOT NULL,
@@ -31,9 +19,7 @@ CREATE TABLE IF NOT EXISTS subsea_cables (
     updated_at          TIMESTAMPTZ DEFAULT current_timestamp
 );
 
--- =============================================================================
 -- 3.2 Cable landing points (ColumnLayer + ArcLayer endpoints)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS cable_landing_points (
     landing_id          VARCHAR PRIMARY KEY,
     cable_id            VARCHAR NOT NULL REFERENCES subsea_cables(cable_id),
@@ -43,9 +29,7 @@ CREATE TABLE IF NOT EXISTS cable_landing_points (
     nearest_cloud_region VARCHAR
 );
 
--- =============================================================================
 -- 3.3 Cable incidents (fault events ingested from CableIncidentPayload)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS cable_incidents (
     incident_id             UUID PRIMARY KEY,
     cable_id                VARCHAR NOT NULL,
@@ -62,14 +46,11 @@ CREATE TABLE IF NOT EXISTS cable_incidents (
     raw_source_payload      VARIANT,
     ingested_at             TIMESTAMPTZ DEFAULT current_timestamp
 );
-
 CREATE INDEX IF NOT EXISTS idx_incidents_detected_at ON cable_incidents(detected_at);
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON cable_incidents(status);
 CREATE INDEX IF NOT EXISTS idx_incidents_zone ON cable_incidents(zone);
 
--- =============================================================================
 -- 3.4 Cloud regions (ColumnLayer nodes)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS cloud_regions (
     region_id       VARCHAR PRIMARY KEY,
     provider        VARCHAR NOT NULL,
@@ -79,9 +60,7 @@ CREATE TABLE IF NOT EXISTS cloud_regions (
     tier            VARCHAR DEFAULT 'standard'
 );
 
--- =============================================================================
 -- 3.5 Cloud latency metrics (time-series)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS cloud_latency_metrics (
     metric_id             UUID PRIMARY KEY,
     provider              VARCHAR NOT NULL,
@@ -94,13 +73,10 @@ CREATE TABLE IF NOT EXISTS cloud_latency_metrics (
     anomaly_score         DOUBLE NOT NULL,
     nearest_cable_id      VARCHAR
 );
-
 CREATE INDEX IF NOT EXISTS idx_latency_sampled_at ON cloud_latency_metrics(sampled_at);
 CREATE INDEX IF NOT EXISTS idx_latency_anomaly ON cloud_latency_metrics(anomaly_score);
 
--- =============================================================================
 -- 3.6 Gemini risk briefs (LLM enrichment output; VARIANT for full audit)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS risk_briefs (
     brief_id                        UUID PRIMARY KEY,
     generated_at                    TIMESTAMPTZ NOT NULL,
@@ -117,9 +93,7 @@ CREATE TABLE IF NOT EXISTS risk_briefs (
     raw_llm_response                VARIANT
 );
 
--- =============================================================================
 -- 3.7 H3 spatial aggregation table (materialized for H3HexagonLayer)
--- =============================================================================
 CREATE TABLE IF NOT EXISTS h3_risk_zones (
     h3_index            VARCHAR PRIMARY KEY,
     resolution          TINYINT NOT NULL DEFAULT 3,
@@ -130,9 +104,7 @@ CREATE TABLE IF NOT EXISTS h3_risk_zones (
     computed_at         TIMESTAMPTZ DEFAULT current_timestamp
 );
 
--- =============================================================================
 -- Seed reference data: major cloud regions (approximate DC hub coordinates)
--- =============================================================================
 INSERT OR IGNORE INTO cloud_regions VALUES
     ('aws:us-east-1',      'aws',   'us-east-1',      'AWS N. Virginia',       ST_Point(-77.46, 38.95),  'standard'),
     ('aws:eu-west-1',      'aws',   'eu-west-1',      'AWS Ireland',           ST_Point(-6.26, 53.35),   'standard'),
@@ -147,9 +119,7 @@ INSERT OR IGNORE INTO cloud_regions VALUES
     ('oci:us-ashburn-1',   'oci',   'us-ashburn-1',   'OCI Ashburn',           ST_Point(-77.46, 39.04),  'standard'),
     ('oci:eu-frankfurt-1', 'oci',   'eu-frankfurt-1', 'OCI Frankfurt',         ST_Point(8.68, 50.11),    'standard');
 
--- =============================================================================
 -- Seed reference data: critical subsea cable systems
--- =============================================================================
 INSERT OR IGNORE INTO subsea_cables (cable_id, cable_name, owner_consortium, rfs_year, capacity_tbps, length_km, route_geom, zone, hyperscaler_owned, metadata) VALUES
     ('aae-1',       'AAE-1',          'Consortium',       2017, 40.0,  25000, ST_GeomFromText('LINESTRING(103.85 1.35, 50.55 26.07, 32.30 30.05, 13.40 52.52)'), 'red_sea_bab_el_mandeb', FALSE, NULL),
     ('eig',         'EIG',            'Consortium',       2012, 3.84,  15000, ST_GeomFromText('LINESTRING(-0.12 51.50, -5.60 36.00, 10.75 34.75, 32.30 30.05, 50.55 26.07)'), 'red_sea_bab_el_mandeb', FALSE, NULL),
@@ -169,9 +139,7 @@ INSERT OR IGNORE INTO subsea_cables (cable_id, cable_name, owner_consortium, rfs
     ('marea',       'Marea',          'Microsoft/Meta',   2017, 200.0, 6600,  ST_GeomFromText('LINESTRING(-75.90 36.80, -2.90 43.25)'), 'other', TRUE, NULL),
     ('tgn-gulf',    'TGN-Gulf',       'Tata',             2005, 5.12,  8000,  ST_GeomFromText('LINESTRING(50.55 26.07, 72.80 19.00, 80.20 13.00)'), 'red_sea_bab_el_mandeb', FALSE, NULL);
 
--- =============================================================================
 -- Seed reference data: cable landing points
--- =============================================================================
 INSERT OR IGNORE INTO cable_landing_points VALUES
     ('lp-aae1-sg',    'aae-1',    'Singapore East',     'Singapore',   ST_Point(103.85, 1.35),   'gcp:asia-southeast1'),
     ('lp-aae1-bh',    'aae-1',    'Manama',             'Bahrain',     ST_Point(50.55, 26.07),   'aws:me-south-1'),

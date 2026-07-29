@@ -262,6 +262,6 @@ def build_deck(
     return pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
-        map_style="mapbox://styles/mapbox/dark-v11",
+        map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
         tooltip=tooltip,
     )

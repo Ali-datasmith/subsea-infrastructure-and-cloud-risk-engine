@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS subsea_cables (
     route_geom          GEOMETRY NOT NULL,
     zone                VARCHAR NOT NULL,
     hyperscaler_owned   BOOLEAN DEFAULT FALSE,
-    metadata            VARIANT,
+    metadata            JSON,
     updated_at          TIMESTAMPTZ DEFAULT current_timestamp
 );
 
@@ -42,8 +42,8 @@ CREATE TABLE IF NOT EXISTS cable_incidents (
     affected_segment_km     DOUBLE,
     repair_vessel_assigned  VARCHAR,
     estimated_repair_days   INTEGER,
-    vessel_correlations     VARIANT,
-    raw_source_payload      VARIANT,
+    vessel_correlations     JSON,
+    raw_source_payload      JSON,
     ingested_at             TIMESTAMPTZ DEFAULT current_timestamp
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_detected_at ON cable_incidents(detected_at);
@@ -88,9 +88,9 @@ CREATE TABLE IF NOT EXISTS risk_briefs (
     affected_cloud_providers        VARCHAR[],
     estimated_impacted_traffic_pct  DOUBLE,
     confidence_score                DOUBLE,
-    recommended_actions             VARIANT,
+    recommended_actions             JSON,
     model_version                   VARCHAR,
-    raw_llm_response                VARIANT
+    raw_llm_response                JSON
 );
 
 -- 3.7 H3 spatial aggregation table (materialized for H3HexagonLayer)

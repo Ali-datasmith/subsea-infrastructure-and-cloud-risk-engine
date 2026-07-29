@@ -42,6 +42,12 @@ class RiskEngineStore:
             logger.warning("spatial INSTALL note (may already be cached): {}", exc)
         self._con.execute("LOAD spatial")
         logger.info("DuckDB spatial extension loaded")
+        try:
+            self._con.execute("INSTALL json")
+        except Exception as exc:
+            logger.warning("json INSTALL note (may already be cached): {}", exc)
+            self._con.execute("LOAD json")
+            logger.info("DuckDB json extension loaded")
 
         for flag_stmt in (
             "SET allow_community_extensions = true",
@@ -202,7 +208,7 @@ class RiskEngineStore:
                 affected_zones, affected_cloud_providers,
                 estimated_impacted_traffic_pct, confidence_score,
                 recommended_actions, model_version, raw_llm_response
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::VARIANT, ?, ?::VARIANT)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::JSON, ?, ?::JSON)
             """,
             [
                 str(brief.brief_id),

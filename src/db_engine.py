@@ -25,8 +25,8 @@ class RiskEngineStore:
         db_dir = Path(settings.duckdb_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
         self._con = duckdb.connect(settings.duckdb_path)
-        self._con.execute("INSTALL spatial; LOAD spatial;")
-        self._con.execute("INSTALL h3 FROM community; LOAD h3;")
+        self._h3_available = False
+        self._load_extensions()
         logger.info("DuckDB connected at {} with spatial + h3 extensions", settings.duckdb_path)
 
     @property

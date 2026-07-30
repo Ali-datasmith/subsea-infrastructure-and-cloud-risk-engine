@@ -155,3 +155,52 @@ INSERT OR IGNORE INTO cable_landing_points VALUES
     ('lp-topaz-jp',   'topaz',    'Tokyo',              'Japan',       ST_Point(139.70, 35.60),  NULL),
     ('lp-marea-us',   'marea',    'Virginia Beach',     'USA',         ST_Point(-75.90, 36.80),  'aws:us-east-1'),
     ('lp-marea-es',   'marea',    'Bilbao',             'Spain',       ST_Point(-2.90, 43.25),   'azure:westeurope');
+-- =============================================================================
+-- Pass B — free-tier external signal tables (weather + news + composite score)
+-- All JSON (works on every DuckDB storage format). No VARIANT here.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS news_risk_signals (
+    news_id          UUID PRIMARY KEY,
+    source           VARCHAR NOT NULL,
+    title            VARCHAR NOT NULL,
+    link             VARCHAR NOT NULL UNIQUE,
+    published_at     TIMESTAMPTZ NOT NULL,
+    zone             VARCHAR NOT NULL,
+    severity         VARCHAR NOT NULL,
+    matched_keywords VARCHAR[],
+    raw_payload      JSON
+);
+CREATE INDEX IF NOT EXISTS idx_news_published_at ON news_risk_signals(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_zone ON news_risk_signals(zone);
+
+CREATE TABLE IF NOT EXISTS weather_risk_signals (
+    sample_id                 UUID PRIMARY KEY,
+    cable_id                  VARCHAR,
+    zone                      VARCHAR NOT NULL,
+    sample_lat                DOUBLE NOT NULL,
+    sample_lon                DOUBLE NOT NULL,
+    sampled_at                TIMESTAMPTZ NOT NULL,
+    wind_speed_kmh            DOUBLE NOT NULL,
+    wind_gust_kmh             DOUBLE NOT NULL,
+    wave_height_m             DOUBLE NOT NULL,
+    precipitation_mm          DOUBLE NOT NULL,
+    weather_fault_probability DOUBLE NOT NULL,
+    repair_vessel_delayed     BOOLEAN NOT NULL DEFAULT FALSE,
+    raw_payload               JSON
+);
+CREATE INDEX IF NOT EXISTS idx_weather_sampled_at ON weather_risk_signals(sampled_at);
+CREATE INDEX IF NOT EXISTS idx_weather_zone ON weather_risk_signals(zone);
+
+CREATE TABLE IF NOT EXISTS cable_risk_scores (
+    cable_id          VARCHAR PRIMARY KEY,
+    zone              VARCHAR NOT NULL,
+    incident_score    DOUBLE NOT NULL DEFAULT 0,
+    weather_score     DOUBLE NOT NULL DEFAULT 0,
+    news_score        DOUBLE NOT NULL DEFAULT 0,
+    composite_score   DOUBLE NOT NULL DEFAULT 0,
+    max_news_severity VARCHAR,
+    repair_delayed    BOOLEAN NOT NULL DEFAULT FALSE,
+    computed_at       TIMESTAMPTZ DEFAULT current_timestamp
+);
+CREATE INDEX IF NOT EXISTS idx_scores_composite ON cable_risk_scores(composite_score);

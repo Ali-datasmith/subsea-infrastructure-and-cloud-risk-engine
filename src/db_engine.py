@@ -14,7 +14,13 @@ import polars as pl
 from loguru import logger
 
 from src.config import EngineSettings
-from src.schemas import CableIncidentPayload, CloudLatencyMetric, GeminiRiskBrief
+from src.schemas import (
+    CableIncidentPayload,
+    CloudLatencyMetric,
+    GeminiRiskBrief,
+    NewsRiskSignal,
+    WeatherRiskSignal,
+)
 
 
 class RiskEngineStore:
@@ -518,6 +524,220 @@ class RiskEngineStore:
         logger.info("Pruned {} latency metrics older than {} days", pruned, retention_days)
         return pruned
 
+    # =========================================================================
+    # Pass B — news + weather upserts, composite scorer, signal context
+    # =========================================================================
+    def upsert_news(self, signals: list[NewsRiskSignal]) -> int:
+        """Insert news signals; de-duplicated by link via INSERT OR IGNORE."""
+        if not signals:
+            return 0
+        rows = [
+            {
+                "news_id": str(s.news_id),
+                "source": s.source,
+                "title": s.title,
+                "link": s.link,
+                "published_at": s.published_at,
+                "zone": s.zone,
+                "severity": s.severity,
+                "matched_keywords": s.matched_keywords,
+                "raw_payload": json.dumps(s.raw_payload),
+            }
+            for s in signals
+        ]
+        df = pl.DataFrame(rows)
+        self._con.execute(
+            """
+            INSERT OR IGNORE INTO news_risk_signals
+                (news_id, source, title, link, published_at, zone, severity, matched_keywords, raw_payload)
+            SELECT news_id::UUID, source, title, link, published_at, zone, severity,
+                   matched_keywords, raw_payload::JSON
+            FROM df
+            """
+        )
+        logger.info("Upserted up to {} news signals (dups ignored)", len(df))
+        return len(df)
+
+    def upsert_weather(self, signals: list[WeatherRiskSignal]) -> int:
+        """Insert weather samples (append-only; latest-per-zone read downstream)."""
+        if not signals:
+            return 0
+        rows = [
+            {
+                "sample_id": str(s.sample_id),
+                "cable_id": s.cable_id,
+                "zone": s.zone,
+                "sample_lat": s.sample_lat,
+                "sample_lon": s.sample_lon,
+                "sampled_at": s.sampled_at,
+                "wind_speed_kmh": s.wind_speed_kmh,
+                "wind_gust_kmh": s.wind_gust_kmh,
+                "wave_height_m": s.wave_height_m,
+                "precipitation_mm": s.precipitation_mm,
+                "weather_fault_probability": s.weather_fault_probability,
+                "repair_vessel_delayed": s.repair_vessel_delayed,
+                "raw_payload": json.dumps(s.raw_payload),
+            }
+            for s in signals
+        ]
+        df = pl.DataFrame(rows)
+        self._con.execute(
+            """
+            INSERT INTO weather_risk_signals
+                (sample_id, cable_id, zone, sample_lat, sample_lon, sampled_at,
+                 wind_speed_kmh, wind_gust_kmh, wave_height_m, precipitation_mm,
+                 weather_fault_probability, repair_vessel_delayed, raw_payload)
+            SELECT sample_id::UUID, cable_id, zone, sample_lat, sample_lon, sampled_at,
+                   wind_speed_kmh, wind_gust_kmh, wave_height_m, precipitation_mm,
+                   weather_fault_probability, repair_vessel_delayed, raw_payload::JSON
+            FROM df
+            """
+        )
+        logger.info("Upserted {} weather samples", len(df))
+        return len(df)
+
+    def refresh_cable_risk_scores(self) -> int:
+        """
+        Zone-joined composite: incident + weather + news → one 0..1 score per cable.
+        Fully guarded: any failure returns 0 and never raises into the UI.
+        """
+        try:
+            self._con.execute("DELETE FROM cable_risk_scores")
+            self._con.execute(
+                """
+                WITH inc AS (
+                    SELECT cable_id, zone,
+                        MAX(CASE status
+                            WHEN 'cut' THEN 1.0 WHEN 'under_repair' THEN 0.7
+                            WHEN 'degraded' THEN 0.4 ELSE 0.0 END) AS incident_score
+                    FROM cable_incidents GROUP BY cable_id, zone
+                ),
+                wz AS (
+                    SELECT zone,
+                        MAX(weather_fault_probability) AS weather_score,
+                        BOOL_OR(repair_vessel_delayed) AS repair_delayed
+                    FROM weather_risk_signals GROUP BY zone
+                ),
+                nz AS (
+                    SELECT zone,
+                        MAX(CASE severity
+                            WHEN 'critical' THEN 1.0 WHEN 'high' THEN 0.75
+                            WHEN 'medium' THEN 0.45 WHEN 'low' THEN 0.15 ELSE 0.0 END) AS news_score,
+                        CASE MAX(CASE severity
+                            WHEN 'critical' THEN 3 WHEN 'high' THEN 2
+                            WHEN 'medium' THEN 1 WHEN 'low' THEN 0 ELSE -1 END)
+                            WHEN 3 THEN 'critical' WHEN 2 THEN 'high'
+                            WHEN 1 THEN 'medium' WHEN 0 THEN 'low' ELSE NULL END AS max_news_severity
+                    FROM news_risk_signals GROUP BY zone
+                )
+                INSERT INTO cable_risk_scores
+                    (cable_id, zone, incident_score, weather_score, news_score,
+                     composite_score, max_news_severity, repair_delayed, computed_at)
+                SELECT sc.cable_id, sc.zone,
+                    COALESCE(inc.incident_score, 0),
+                    COALESCE(wz.weather_score, 0),
+                    COALESCE(nz.news_score, 0),
+                    LEAST(1.0, 0.5 * COALESCE(inc.incident_score, 0)
+                               + 0.3 * COALESCE(wz.weather_score, 0)
+                               + 0.4 * COALESCE(nz.news_score, 0)),
+                    nz.max_news_severity,
+                    COALESCE(wz.repair_delayed, FALSE),
+                    current_timestamp
+                FROM subsea_cables sc
+                LEFT JOIN inc ON inc.cable_id = sc.cable_id
+                LEFT JOIN wz  ON wz.zone = sc.zone
+                LEFT JOIN nz  ON nz.zone = sc.zone
+                """
+            )
+            count = self._con.execute("SELECT COUNT(*) FROM cable_risk_scores").fetchone()[0]
+            logger.info("Refreshed cable_risk_scores: {} cables", count)
+            return count
+        except Exception as exc:
+            logger.error("cable_risk_scores refresh failed (non-fatal): {}", exc)
+            return 0
+
+    def get_latest_weather(self) -> pl.DataFrame:
+        """Most recent weather sample per zone."""
+        result = self._con.execute(
+            """
+            SELECT zone, wave_height_m, wind_gust_kmh, wind_speed_kmh,
+                   precipitation_mm, weather_fault_probability, repair_vessel_delayed, sampled_at
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY zone ORDER BY sampled_at DESC) AS rn
+                FROM weather_risk_signals
+            ) WHERE rn = 1
+            ORDER BY weather_fault_probability DESC
+            """
+        )
+        return pl.from_arrow(result.fetch_arrow_table())
+
+    def get_latest_news(self, limit: int = 15) -> pl.DataFrame:
+        """Most recent news hits (newest first)."""
+        result = self._con.execute(
+            f"""
+            SELECT zone, severity, source, title, link, published_at, matched_keywords
+            FROM news_risk_signals
+            ORDER BY published_at DESC
+            LIMIT {limit}
+            """
+        )
+        return pl.from_arrow(result.fetch_arrow_table())
+
+    def get_cable_risk_scores(self) -> pl.DataFrame:
+        """Composite per-cable scores, worst first."""
+        result = self._con.execute(
+            """
+            SELECT cable_id, zone, incident_score, weather_score, news_score,
+                   composite_score, max_news_severity, repair_delayed
+            FROM cable_risk_scores
+            ORDER BY composite_score DESC
+            """
+        )
+        return pl.from_arrow(result.fetch_arrow_table())
+
+    def get_signal_context_for_llm(self, limit: int = 20) -> str:
+        """
+        Incident context + live weather + news, for Gemini. Defensive: if the
+        signal tables error for any reason, the incident-only context is returned.
+        """
+        base = self.get_incident_context_for_llm(limit=limit)
+        lines: list[str] = [base, "", "LIVE EXTERNAL RISK SIGNALS:", "=" * 60]
+        try:
+            weather = self.get_latest_weather()
+            if len(weather) > 0:
+                for row in weather.to_dicts():
+                    lines.append(
+                        f"- WEATHER [{row['zone']}] wave={row['wave_height_m']:.1f}m "
+                        f"gust={row['wind_gust_kmh']:.0f}km/h "
+                        f"fault_prob={row['weather_fault_probability']:.2f} "
+                        f"repair_delayed={row['repair_vessel_delayed']}"
+                    )
+            else:
+                lines.append("- WEATHER: no marine samples available")
+        except Exception as exc:
+            logger.warning("Weather context skipped: {}", exc)
+            lines.append("- WEATHER: unavailable")
+        try:
+            news = self.get_latest_news(limit=12)
+            if len(news) > 0:
+                for row in news.to_dicts():
+                    lines.append(
+                        f"- NEWS [{row['zone']}/{row['severity']}] {row['title']} ({row['source']})"
+                    )
+            else:
+                lines.append("- NEWS: no matching headlines")
+        except Exception as exc:
+            logger.warning("News context skipped: {}", exc)
+            lines.append("- NEWS: unavailable")
+        lines += [
+            "=" * 60,
+            "Factor WEATHER (storm-induced faults + repair-ship delay) and NEWS "
+            "(conflict / anchor / sabotage near chokepoints) into risk_level, "
+            "estimated_impacted_traffic_pct, and recommended_actions.",
+        ]
+        return "\n".join(lines)
+
+    
     def close(self) -> None:
         """Gracefully close the DuckDB connection."""
         self._con.close()

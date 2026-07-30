@@ -222,5 +222,32 @@ if len(incidents_df) > 0:
 else:
     st.success("✅ No active cable incidents. All systems nominal.")
 
-logger.info("Status page rendered: {} cables, {} regions, {} H3 cells, {} incidents",
-            len(cables_df), len(regions_df), len(h3_df), len(incidents_df))
+# =============================================================================
+# External free-tier signals (Pass B)
+# =============================================================================
+st.divider()
+with st.expander("🛰️ External Signals — weather · news · composite risk", expanded=True):
+    scores_df = store.get_cable_risk_scores()
+    weather_df = store.get_latest_weather()
+    news_df = store.get_latest_news(limit=10)
+
+    st.markdown("**Composite cable risk** (incident 50 % · weather 30 % · news 40 %, clipped 0–1)")
+    if len(scores_df) > 0:
+        st.dataframe(scores_df, width="stretch", hide_index=True)
+    else:
+        st.info("No scores yet — inject demo data or pull live feeds on the Input page.")
+
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        st.markdown("**Marine weather by zone**")
+        if len(weather_df) > 0:
+            st.dataframe(weather_df, width="stretch", hide_index=True)
+        else:
+            st.caption("No weather samples.")
+    with sc2:
+        st.markdown("**Latest risk news**")
+        if len(news_df) > 0:
+            st.dataframe(news_df, width="stretch", hide_index=True)
+        else:
+            st.caption("No news hits.")
+

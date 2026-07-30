@@ -31,6 +31,12 @@ from src.ingestion import (
     run_ingestion_cycle,
 )
 from src.schemas import CableIncidentPayload, CloudLatencyMetric
+from src.free_feeds import (
+    OpenMeteoClient,
+    RssNewsClient,
+    make_synthetic_news,
+    make_synthetic_weather,
+)
 
 
 st.set_page_config(page_title="Input & Ingestion", page_icon="📥", layout="wide")
@@ -225,8 +231,25 @@ with col_demo:
             validated_lf = validate_incidents(lf)
             count = store.upsert_incidents(demo_incidents)
             store.refresh_h3_risk_zones()
-            st.success(f"✅ Injected {count} demo incidents and refreshed H3 zones")
-            logger.info("Demo incidents injected: {} rows", count)
+
+            # Pass B: deterministic, network-free weather + news for the demo zones.
+            demo_zones = ["red_sea_bab_el_mandeb", "baltic_sea",
+                          "taiwan_luzon_strait", "west_africa_coast"]
+            w_signals = [make_synthetic_weather(z) for z in demo_zones]
+            n_signals = [n for z in demo_zones for n in make_synthetic_news(z)]
+            store.upsert_weather(w_signals)
+            store.upsert_news(n_signals)
+            scored = store.refresh_cable_risk_scores()
+
+            st.success(
+                f"✅ Injected {count} incidents + {len(w_signals)} weather + "
+                f"{len(n_signals)} news signals; scored {scored} cables"
+            )
+            st.session_state.pop("cables_df", None)
+            st.session_state.pop("h3_df", None)
+            st.session_state.pop("incidents_df", None)
+            logger.info("Demo inject complete: incidents={} weather={} news={} scores={}",
+                        count, len(w_signals), len(n_signals), scored)
         except Exception as exc:
             st.error(f"❌ Demo injection failed: {exc}")
             logger.exception("Demo injection failed")
@@ -234,8 +257,46 @@ with col_demo:
 st.divider()
 
 # =============================================================================
-# Quarantine Viewer
+# Live Free Feeds (keyless): Open-Meteo weather + Google News RSS
 # =============================================================================
+st.header("🌐 Live Free Feeds (no API key)")
+st.markdown(
+    "Pulls **real, free, keyless** data: marine weather from Open‑Meteo and a "
+    "conflict/anchor/sabotage keyword watch from Google News RSS. "
+    "Failures degrade gracefully — they never blank the page."
+)
+col_w, col_n = st.columns(2)
+with col_w:
+    if st.button("🌦️ Pull Live Weather (Open‑Meteo)", use_container_width=True):
+        with st.spinner("Fetching marine weather per corridor…"):
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                w_sigs = loop.run_until_complete(OpenMeteoClient(settings).fetch_all_zones())
+                loop.close()
+                w_count = store.upsert_weather(w_sigs)
+                store.refresh_cable_risk_scores()
+                st.success(f"✅ Stored {w_count} live weather samples")
+            except Exception as exc:
+                st.error(f"❌ Weather pull failed: {exc}")
+                logger.exception("Live weather pull failed")
+with col_n:
+    if st.button("📰 Pull Live News (Google RSS)", use_container_width=True):
+        with st.spinner("Scanning news for cable-risk keywords…"):
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                n_sigs = loop.run_until_complete(RssNewsClient(settings).fetch_all())
+                loop.close()
+                n_count = store.upsert_news(n_sigs)
+                store.refresh_cable_risk_scores()
+                st.success(f"✅ Stored {n_count} live news hits")
+            except Exception as exc:
+                st.error(f"❌ News pull failed: {exc}")
+                logger.exception("Live news pull failed")
+
+st.divider()
+
 
 st.header("🚫 Quarantine Viewer")
 

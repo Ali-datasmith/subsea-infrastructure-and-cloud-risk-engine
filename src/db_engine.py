@@ -149,7 +149,7 @@ class RiskEngineStore:
             FROM incidents_df
             """
         )
-        row_count = self._con.execute("SELECT changes()").fetchone()[0]
+        row_count = len(incidents_df)
         logger.info("Upserted {} cable incidents via zero-copy Arrow", row_count)
         return row_count
 
@@ -186,7 +186,7 @@ class RiskEngineStore:
             SELECT * FROM metrics_df
             """
         )
-        row_count = self._con.execute("SELECT changes()").fetchone()[0]
+        row_count = len(metrics_df)
         logger.info("Upserted {} latency metrics via zero-copy Arrow", row_count)
         return row_count
 
@@ -502,13 +502,19 @@ class RiskEngineStore:
 
     def prune_old_latency_metrics(self, retention_days: int = 90) -> int:
         """Remove latency metrics older than retention window."""
-        self._con.execute(
+        pruned = self._con.execute(
             f"""
-            DELETE FROM cloud_latency_metrics
+            SELECT COUNT(*) FROM cloud_latency_metrics
             WHERE sampled_at < current_timestamp - INTERVAL '{retention_days}' DAY
             """
-        )
-        pruned = self._con.execute("SELECT changes()").fetchone()[0]
+        ).fetchone()[0]
+        if pruned:
+            self._con.execute(
+                f"""
+                DELETE FROM cloud_latency_metrics
+                WHERE sampled_at < current_timestamp - INTERVAL '{retention_days}' DAY
+                """
+            )
         logger.info("Pruned {} latency metrics older than {} days", pruned, retention_days)
         return pruned
 

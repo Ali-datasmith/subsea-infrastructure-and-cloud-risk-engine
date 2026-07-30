@@ -79,7 +79,7 @@ if generate_clicked:
     else:
         with st.spinner("🧠 Generating risk brief via Gemini..."):
             try:
-                incident_context = store.get_incident_context_for_llm(limit=20)
+                incident_context = store.get_signal_context_for_llm(limit=20)
                 st.text_area(
                     "Context sent to Gemini (read-only)",
                     value=incident_context,

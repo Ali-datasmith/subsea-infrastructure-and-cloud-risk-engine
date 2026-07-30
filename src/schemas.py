@@ -187,3 +187,74 @@ class GeminiRiskBrief(BaseModel):
     confidence_score: float = Field(..., ge=0, le=1)
     recommended_actions: list[RecommendedAction] = Field(..., min_length=1, max_length=6)
     model_version: str = Field(default="gemini-2.0-flash")
+# =============================================================================
+# 2.4 Pass B — external free-tier signal models (weather + news + score)
+# These are ingestion/read models only (never sent to Gemini as response_schema),
+# so extra="ignore" keeps them lenient against messy external sources.
+# =============================================================================
+
+
+class NewsRiskSignal(BaseModel):
+    """A keyword-matched news headline tagged to a geopolitical zone + severity."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    news_id: UUID = Field(default_factory=uuid4)
+    source: str
+    title: str
+    link: str
+    published_at: datetime
+    zone: str
+    severity: str = Field(default="medium")
+    matched_keywords: list[str] = Field(default_factory=list)
+    raw_payload: dict = Field(default_factory=dict)
+
+    @field_validator("published_at")
+    @classmethod
+    def _tz_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class WeatherRiskSignal(BaseModel):
+    """Marine/forecast sample over a cable corridor, scored for fault risk."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    sample_id: UUID = Field(default_factory=uuid4)
+    cable_id: Optional[str] = None
+    zone: str
+    sample_lat: float = Field(..., ge=-90, le=90)
+    sample_lon: float = Field(..., ge=-180, le=180)
+    sampled_at: datetime
+    wind_speed_kmh: float = Field(default=0.0, ge=0)
+    wind_gust_kmh: float = Field(default=0.0, ge=0)
+    wave_height_m: float = Field(default=0.0, ge=0)
+    precipitation_mm: float = Field(default=0.0, ge=0)
+    weather_fault_probability: float = Field(..., ge=0, le=1)
+    repair_vessel_delayed: bool = False
+    raw_payload: dict = Field(default_factory=dict)
+
+    @field_validator("sampled_at")
+    @classmethod
+    def _tz_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class CableRiskScore(BaseModel):
+    """Per-cable composite risk (read model from the scorer)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    cable_id: str
+    zone: str
+    incident_score: float = Field(..., ge=0, le=1)
+    weather_score: float = Field(..., ge=0, le=1)
+    news_score: float = Field(..., ge=0, le=1)
+    composite_score: float = Field(..., ge=0, le=1)
+    max_news_severity: Optional[str] = None
+    repair_delayed: bool = False
+    computed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

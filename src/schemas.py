@@ -156,7 +156,10 @@ class CloudLatencyMetric(BaseModel):
 
 
 class RecommendedAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # extra="ignore" (NOT "forbid") so the JSON schema sent to Gemini as
+    # response_schema contains no "additionalProperties" key — Gemini rejects
+    # that key with 400 INVALID_ARGUMENT.
+    model_config = ConfigDict(extra="ignore")
     action: str
     priority: RiskLevel
     rationale: str
@@ -168,7 +171,9 @@ class GeminiRiskBrief(BaseModel):
     Round-tripped via model_validate_json() on the response before persistence.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # extra="ignore" so model_json_schema() omits "additionalProperties"
+    # (Gemini's response_schema rejects that key — see the 400 INVALID_ARGUMENT).
+    model_config = ConfigDict(extra="ignore")
 
     brief_id: UUID = Field(default_factory=uuid4)
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

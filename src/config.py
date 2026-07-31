@@ -1,6 +1,6 @@
 """
 Centralized configuration via pydantic-settings BaseSettings.
-All secrets and environment-driven parameters are loaded from .env.
+All secrets and environment-driven parameters are loaded from .env / Cloud Secrets.
 """
 from __future__ import annotations
 
@@ -76,7 +76,8 @@ class EngineSettings(BaseSettings):
     )
 
     # ─── LLM ───────────────────────────────────────────────────────────────
-    gemini_model: str = Field(default="gemini-2.0-flash", description="Gemini model ID")
+    # Hard-wired to the model proven in the working reference project.
+    gemini_model: str = Field(default="gemini-3.5-flash", description="Gemini model ID")
     gemini_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     gemini_max_retries: int = Field(default=4, ge=1, le=10)
 
@@ -93,7 +94,6 @@ class EngineSettings(BaseSettings):
 def configure_logging(settings: EngineSettings) -> None:
     """Configure loguru with structured JSON sink and stderr output."""
     logger.remove()
-
     settings.log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.add(
@@ -107,7 +107,6 @@ def configure_logging(settings: EngineSettings) -> None:
         ),
         colorize=True,
     )
-
     logger.add(
         str(settings.log_file),
         level=settings.log_level,
@@ -117,12 +116,7 @@ def configure_logging(settings: EngineSettings) -> None:
         retention="30 days",
         compression="gz",
     )
-
-    logger.info(
-        "Logging configured: level={}, sink={}",
-        settings.log_level,
-        settings.log_file,
-    )
+    logger.info("Logging configured: level={}, sink={}", settings.log_level, settings.log_file)
 
 
 def get_settings() -> EngineSettings:

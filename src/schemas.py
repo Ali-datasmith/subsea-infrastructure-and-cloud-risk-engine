@@ -1,6 +1,15 @@
 """
 Pydantic v2 edge-validation models for all ingestion payloads and LLM outputs.
 These are the ONLY accepted shapes crossing the ingestion boundary.
+
+NOTE on extra= policy:
+- INGESTION models (CableIncidentPayload, CloudLatencyMetric, VesselCorrelation)
+  keep extra="forbid" — strictness at the edge is correct and they are NEVER
+  converted into a Gemini response_schema.
+- LLM OUTPUT models (GeminiRiskBrief, RecommendedAction) use extra="ignore" so
+  model_json_schema() emits NO "additionalProperties" key — Gemini's
+  response_schema rejects that key with 400 INVALID_ARGUMENT.
+- Pass-B read models use extra="ignore" to stay lenient against messy feeds.
 """
 from __future__ import annotations
 
@@ -15,7 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # =============================================================================
 # Shared enums
 # =============================================================================
-
 
 class FaultType(str, Enum):
     ANCHOR_DRAG = "anchor_drag"
@@ -63,7 +71,6 @@ class GeopoliticalZone(str, Enum):
 # 2.1 Cable Incident Payload (ingestion edge model)
 # =============================================================================
 
-
 class LatLon(BaseModel):
     model_config = ConfigDict(frozen=True)
     lat: float = Field(..., ge=-90, le=90)
@@ -100,9 +107,7 @@ class CableIncidentPayload(BaseModel):
     repair_vessel_assigned: Optional[str] = None
     estimated_repair_days: Optional[int] = Field(default=None, ge=0, le=365)
     vessel_correlations: list[VesselCorrelation] = Field(default_factory=list)
-    raw_source_payload: dict = Field(
-        default_factory=dict, description="Preserved for VARIANT storage"
-    )
+    raw_source_payload: dict = Field(default_factory=dict, description="Preserved for JSON storage")
 
     @field_validator("detected_at")
     @classmethod
@@ -115,7 +120,6 @@ class CableIncidentPayload(BaseModel):
 # =============================================================================
 # 2.2 Cloud Latency Metric (ingestion edge model)
 # =============================================================================
-
 
 class CloudLatencyMetric(BaseModel):
     """Validated shape for a single inter-region latency/health sample."""
@@ -154,11 +158,9 @@ class CloudLatencyMetric(BaseModel):
 # 2.3 Gemini Output Brief (LLM structured output contract)
 # =============================================================================
 
-
 class RecommendedAction(BaseModel):
-    # extra="ignore" (NOT "forbid") so the JSON schema sent to Gemini as
-    # response_schema contains no "additionalProperties" key — Gemini rejects
-    # that key with 400 INVALID_ARGUMENT.
+    # extra="ignore" so the JSON schema sent to Gemini contains no
+    # "additionalProperties" key (Gemini rejects it with 400 INVALID_ARGUMENT).
     model_config = ConfigDict(extra="ignore")
     action: str
     priority: RiskLevel
@@ -168,11 +170,11 @@ class RecommendedAction(BaseModel):
 class GeminiRiskBrief(BaseModel):
     """
     Strict schema passed to Gemini as response_schema / JSON schema constraint.
-    Round-tripped via model_validate_json() on the response before persistence.
+    The SDK returns it directly via response.parsed; we also round-trip via
+    model_validate_json() as a fallback before persistence.
     """
 
-    # extra="ignore" so model_json_schema() omits "additionalProperties"
-    # (Gemini's response_schema rejects that key — see the 400 INVALID_ARGUMENT).
+    # extra="ignore" so model_json_schema() omits "additionalProperties".
     model_config = ConfigDict(extra="ignore")
 
     brief_id: UUID = Field(default_factory=uuid4)
@@ -186,13 +188,12 @@ class GeminiRiskBrief(BaseModel):
     estimated_impacted_traffic_pct: float = Field(..., ge=0, le=100)
     confidence_score: float = Field(..., ge=0, le=1)
     recommended_actions: list[RecommendedAction] = Field(..., min_length=1, max_length=6)
-    model_version: str = Field(default="gemini-2.0-flash")
+    model_version: str = Field(default="gemini-3.5-flash")
+
+
 # =============================================================================
 # 2.4 Pass B — external free-tier signal models (weather + news + score)
-# These are ingestion/read models only (never sent to Gemini as response_schema),
-# so extra="ignore" keeps them lenient against messy external sources.
 # =============================================================================
-
 
 class NewsRiskSignal(BaseModel):
     """A keyword-matched news headline tagged to a geopolitical zone + severity."""

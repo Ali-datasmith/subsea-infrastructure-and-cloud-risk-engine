@@ -150,6 +150,7 @@ class GeminiRiskBriefClient:
         Returns (validated_brief, raw_response_text) for audit persistence.
         """
         prompt = BRIEF_PROMPT.format(incident_context=incident_context)
+        brief.model_version = self._model  # stamp the real id; don't trust the model's self-report
         logger.info("Sending risk brief generation request to Gemini ({})", self._model)
 
         response = self._client.models.generate_content(

@@ -20,7 +20,6 @@ from src.config import get_settings
 from src.db_engine import RiskEngineStore
 from src.viz_layers import build_deck
 
-
 st.set_page_config(page_title="Live Risk Map", page_icon="🗺️", layout="wide")
 st.title("🗺️ Subsea Infrastructure & Cloud Risk — Live Status")
 
@@ -41,7 +40,6 @@ store = get_store()
 # =============================================================================
 # Sidebar controls
 # =============================================================================
-
 with st.sidebar:
     st.header("🎛️ Map Controls")
 
@@ -64,7 +62,6 @@ with st.sidebar:
 # =============================================================================
 # Data loading (cached in session state)
 # =============================================================================
-
 if "cables_df" not in st.session_state:
     with st.spinner("Loading cable data..."):
         st.session_state["cables_df"] = store.get_cables_with_endpoints()
@@ -89,7 +86,6 @@ incidents_df: pl.DataFrame = st.session_state["incidents_df"]
 # =============================================================================
 # Apply layer visibility filters
 # =============================================================================
-
 if not show_cables:
     cables_df = pl.DataFrame(
         schema={
@@ -141,7 +137,6 @@ if not show_incidents:
 # =============================================================================
 # Render PyDeck chart
 # =============================================================================
-
 deck = build_deck(
     cables_df=cables_df,
     regions_df=regions_df,
@@ -151,13 +146,11 @@ deck = build_deck(
     center_lon=center_lon,
     zoom=zoom_level,
 )
-
-st.pydeck_chart(deck, use_container_width=True)
+st.pydeck_chart(deck, width="stretch")
 
 # =============================================================================
 # Summary metrics below map
 # =============================================================================
-
 st.divider()
 st.subheader("📈 Risk Summary")
 
@@ -166,19 +159,15 @@ col1, col2, col3, col4, col5 = st.columns(5)
 active_incidents = store.connection.execute(
     "SELECT COUNT(*) FROM cable_incidents WHERE status IN ('cut', 'degraded', 'under_repair')"
 ).fetchone()[0]
-
 cut_count = store.connection.execute(
     "SELECT COUNT(*) FROM cable_incidents WHERE status = 'cut'"
 ).fetchone()[0]
-
 zones_affected = store.connection.execute(
     "SELECT COUNT(DISTINCT zone) FROM cable_incidents WHERE status IN ('cut', 'degraded', 'under_repair')"
 ).fetchone()[0]
-
 h3_cells = len(h3_df) if show_h3 else store.connection.execute(
     "SELECT COUNT(*) FROM h3_risk_zones"
 ).fetchone()[0]
-
 avg_repair = store.connection.execute(
     "SELECT COALESCE(AVG(estimated_repair_days), 0) FROM cable_incidents WHERE status IN ('cut', 'under_repair')"
 ).fetchone()[0]
@@ -197,7 +186,6 @@ with col5:
 # =============================================================================
 # Active incidents table
 # =============================================================================
-
 st.divider()
 st.subheader("🔴 Active Incidents Detail")
 
@@ -205,7 +193,7 @@ if len(incidents_df) > 0:
     display_df = store.get_active_incidents()
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "incident_id": st.column_config.TextColumn("ID", width="small"),
@@ -250,4 +238,12 @@ with st.expander("🛰️ External Signals — weather · news · composite risk
             st.dataframe(news_df, width="stretch", hide_index=True)
         else:
             st.caption("No news hits.")
+
+logger.info(
+    "Status page rendered: {} cables, {} regions, {} H3 cells, {} incidents",
+    len(cables_df),
+    len(regions_df),
+    len(h3_df),
+    len(incidents_df),
+)
 

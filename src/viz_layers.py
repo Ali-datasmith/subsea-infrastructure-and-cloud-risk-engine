@@ -1,15 +1,20 @@
 """
 PyDeck layer factories for the 3D geospatial risk dashboard.
 
-Basemap note: we deliberately do NOT pass an external style.json URL — on
-Streamlit Cloud that path renders as a broken solid-colour wash. Omitting
-map_style lets pydeck use its built-in, token-free, always-renders basemap.
-A styled dark map is reintroduced in the Pass-C visual overhaul.
+Basemap strategy (the fix for the solid-colour wash on Streamlit Cloud):
+  We do NOT point map_style at a hosted *.json style (Mapbox needs a token;
+  Carto's GL style needs sprite/glyph sub-fetches that fail inside Cloud's
+  sandboxed iframe — both render as a flat colour). Instead we pass a tiny
+  self-contained Mapbox-style *dict* whose only source is Carto's free raster
+  PNG tiles. Raster tiles are plain images: no style.json, no sprites, no
+  glyphs, no API key — so the real dark world map (coastlines + labels)
+  renders reliably, with our data layers drawn on top.
 
-H3 note: deck.gl's H3HexagonLayer needs a valid hex cell id; an invalid one can
-render a degenerate world-covering polygon. We therefore keep only records whose
-h3_index matches the H3 hex-string format, so a bad/empty value degrades to an
-empty layer instead of painting the map.
+Resilience:
+  - H3HexagonLayer is guarded by a hex-index regex so an invalid/empty cell
+    degrades to an empty layer instead of painting a world-spanning polygon.
+  - Every layer builder is wrapped in _safe_build so one bad frame can never
+    blank the whole deck.
 """
 from __future__ import annotations
 
@@ -20,13 +25,42 @@ import polars as pl
 import pydeck as pdk
 from loguru import logger
 
+# =============================================================================
+# Self-contained dark basemap: Carto raster PNG tiles (free, no key, no style.json)
+# =============================================================================
+CARTO_DARK_RASTER_STYLE: dict = {
+    "version": 8,
+    "name": "carto-dark-raster",
+    "sources": {
+        "carto-dark": {
+            "type": "raster",
+            "tiles": [
+                "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+                "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+                "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+                "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+            ],
+            "tileSize": 256,
+            "attribution": "© OpenStreetMap contributors © CARTO",
+        }
+    },
+    "layers": [
+        {
+            "id": "carto-dark-layer",
+            "type": "raster",
+            "source": "carto-dark",
+            "minzoom": 0,
+            "maxzoom": 20,
+        }
+    ],
+}
+
 # A valid H3 hex-string index is 15-16 hex characters.
 _H3_HEX_RE = re.compile(r"^[0-9a-fA-F]{15,16}$")
 
 # =============================================================================
 # Color maps
 # =============================================================================
-
 STATUS_COLOR_MAP: dict[str, list[int]] = {
     "active": [46, 204, 113, 160],
     "degraded": [241, 196, 15, 200],
@@ -58,7 +92,6 @@ def _empty_layer(kind: str, layer_id: str) -> pdk.Layer:
 # =============================================================================
 # Layer builders
 # =============================================================================
-
 def build_cable_arc_layer(cables_df: pl.DataFrame) -> pdk.Layer:
     """ArcLayer: one arc per cable segment, colored by live status."""
     if len(cables_df) == 0:
@@ -144,7 +177,6 @@ def build_h3_risk_layer(h3_zones_df: pl.DataFrame) -> pdk.Layer:
         .to_dicts()
     )
 
-    # Keep only records with a valid H3 hex-string id.
     records = [r for r in raw_records if _H3_HEX_RE.match(str(r.get("h3_index", "")))]
     dropped = len(raw_records) - len(records)
     if dropped:
@@ -221,7 +253,6 @@ def _safe_build(builder, df: pl.DataFrame, kind: str, layer_id: str) -> pdk.Laye
 # =============================================================================
 # Deck assembly
 # =============================================================================
-
 def build_deck(
     cables_df: pl.DataFrame,
     regions_df: pl.DataFrame,
@@ -231,7 +262,7 @@ def build_deck(
     center_lon: float = 35.0,
     zoom: float = 2.0,
 ) -> pdk.Deck:
-    """Assemble the full PyDeck Deck. No external basemap URL (reliable default)."""
+    """Assemble the full PyDeck Deck over the self-contained dark raster basemap."""
     view_state = pdk.ViewState(
         latitude=center_lat,
         longitude=center_lon,
@@ -270,7 +301,6 @@ def build_deck(
     return pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
-        # Intentionally NO map_style: pydeck's built-in basemap renders reliably
-        # on Cloud without a token. (Dark styled map returns in Pass C.)
+        map_style=CARTO_DARK_RASTER_STYLE,  # self-contained raster basemap (no token, no style.json)
         tooltip=tooltip,
     )

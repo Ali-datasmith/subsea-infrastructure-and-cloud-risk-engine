@@ -1,7 +1,6 @@
 """
-Page 2 — Status: Live 3D PyDeck geospatial risk map.
-Renders ArcLayer (cables), ColumnLayer (DCs), H3HexagonLayer (risk zones),
-and ScatterplotLayer (active incidents).
+Page 2 — Status: live geospatial risk map (Folium + Leaflet), risk summary,
+active-incident detail, and the Pass-B external-signals panel.
 """
 from __future__ import annotations
 
@@ -14,11 +13,12 @@ if str(APP_ROOT) not in sys.path:
 
 import polars as pl
 import streamlit as st
+import streamlit.components.v1 as components
 from loguru import logger
 
 from src.config import get_settings
 from src.db_engine import RiskEngineStore
-from src.viz_layers import build_deck
+from src.viz_layers import build_folium_map
 
 st.set_page_config(page_title="Live Risk Map", page_icon="🗺️", layout="wide")
 st.title("🗺️ Subsea Infrastructure & Cloud Risk — Live Status")
@@ -49,13 +49,12 @@ with st.sidebar:
 
     show_cables = st.checkbox("Show Cable Arcs", value=True)
     show_dc = st.checkbox("Show Data Centers", value=True)
-    show_h3 = st.checkbox("Show H3 Risk Zones", value=True)
+    show_heat = st.checkbox("Show Risk Heatmap", value=True)
     show_incidents = st.checkbox("Show Incident Markers", value=True)
 
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.session_state.pop("cables_df", None)
         st.session_state.pop("regions_df", None)
-        st.session_state.pop("h3_df", None)
         st.session_state.pop("incidents_df", None)
         st.rerun()
 
@@ -70,83 +69,34 @@ if "regions_df" not in st.session_state:
     with st.spinner("Loading cloud region data..."):
         st.session_state["regions_df"] = store.get_cloud_regions_with_anomaly()
 
-if "h3_df" not in st.session_state:
-    with st.spinner("Loading H3 risk zones..."):
-        st.session_state["h3_df"] = store.get_h3_risk_zones()
-
 if "incidents_df" not in st.session_state:
     with st.spinner("Loading active incidents..."):
         st.session_state["incidents_df"] = store.get_active_incidents()
 
 cables_df: pl.DataFrame = st.session_state["cables_df"]
 regions_df: pl.DataFrame = st.session_state["regions_df"]
-h3_df: pl.DataFrame = st.session_state["h3_df"]
 incidents_df: pl.DataFrame = st.session_state["incidents_df"]
 
 # =============================================================================
-# Apply layer visibility filters
+# Render the Folium / Leaflet map (reliable dark basemap on Cloud)
 # =============================================================================
-if not show_cables:
-    cables_df = pl.DataFrame(
-        schema={
-            "cable_id": pl.Utf8,
-            "cable_name": pl.Utf8,
-            "status": pl.Utf8,
-            "source_lon": pl.Float64,
-            "source_lat": pl.Float64,
-            "target_lon": pl.Float64,
-            "target_lat": pl.Float64,
-        }
-    )
-
-if not show_dc:
-    regions_df = pl.DataFrame(
-        schema={
-            "region_id": pl.Utf8,
-            "display_name": pl.Utf8,
-            "provider": pl.Utf8,
-            "lon": pl.Float64,
-            "lat": pl.Float64,
-            "anomaly_score": pl.Float64,
-        }
-    )
-
-if not show_h3:
-    h3_df = pl.DataFrame(
-        schema={
-            "h3_index": pl.Utf8,
-            "incident_count": pl.Int64,
-            "avg_anomaly_score": pl.Float64,
-            "max_risk_level": pl.Utf8,
-        }
-    )
-
-if not show_incidents:
-    incidents_df = pl.DataFrame(
-        schema={
-            "incident_id": pl.Utf8,
-            "cable_id": pl.Utf8,
-            "fault_type": pl.Utf8,
-            "status": pl.Utf8,
-            "zone": pl.Utf8,
-            "lon": pl.Float64,
-            "lat": pl.Float64,
-        }
-    )
-
-# =============================================================================
-# Render PyDeck chart
-# =============================================================================
-deck = build_deck(
+map_html = build_folium_map(
     cables_df=cables_df,
     regions_df=regions_df,
-    h3_zones_df=h3_df,
     incidents_df=incidents_df,
     center_lat=center_lat,
     center_lon=center_lon,
-    zoom=zoom_level,
+    zoom=int(round(zoom_level)),
+    show_cables=show_cables,
+    show_dc=show_dc,
+    show_heat=show_heat,
+    show_incidents=show_incidents,
 )
-st.pydeck_chart(deck, width="stretch")
+components.html(map_html, height=720, scrolling=False)
+st.caption(
+    "Basemap: Folium + Leaflet over Carto Dark raster tiles "
+    "(token-free; renders reliably inside Streamlit Cloud)."
+)
 
 # =============================================================================
 # Summary metrics below map
@@ -165,9 +115,7 @@ cut_count = store.connection.execute(
 zones_affected = store.connection.execute(
     "SELECT COUNT(DISTINCT zone) FROM cable_incidents WHERE status IN ('cut', 'degraded', 'under_repair')"
 ).fetchone()[0]
-h3_cells = len(h3_df) if show_h3 else store.connection.execute(
-    "SELECT COUNT(*) FROM h3_risk_zones"
-).fetchone()[0]
+h3_cells = store.connection.execute("SELECT COUNT(*) FROM h3_risk_zones").fetchone()[0]
 avg_repair = store.connection.execute(
     "SELECT COALESCE(AVG(estimated_repair_days), 0) FROM cable_incidents WHERE status IN ('cut', 'under_repair')"
 ).fetchone()[0]
@@ -240,10 +188,9 @@ with st.expander("🛰️ External Signals — weather · news · composite risk
             st.caption("No news hits.")
 
 logger.info(
-    "Status page rendered: {} cables, {} regions, {} H3 cells, {} incidents",
+    "Status page rendered: {} cables, {} regions, {} incidents",
     len(cables_df),
     len(regions_df),
-    len(h3_df),
     len(incidents_df),
 )
 

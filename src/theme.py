@@ -284,4 +284,4 @@ def render_alert_chime_control() -> None:
 # =============================================================================
 def inject_theme() -> None:
     """Inject the glass CSS. Call once per page, right after set_page_config."""
-    st.markdown(THEME_CSS, unsafe_allow_html=True)
+    st.markdown("<style>\n" + THEME_CSS + "\n</style>", unsafe_allow_html=True)

@@ -3,18 +3,23 @@ Pass C — "Deep Ocean & Electric Cyan" glassmorphic command-center theme.
 
 PURE visual layer. No data, no DB, no LLM logic lives here, so it cannot
 regress the working engine.
-- THEME_CSS is injected via st.markdown(unsafe_allow_html=True). Streamlit KEEPS
-  <style> (it strips <script>), so all glass + keyframe effects render on Cloud.
-  backdrop-filter / Google Fonts degrade gracefully (tinted cards + system fonts)
-  if a sandbox blocks them — never a crash.
+- THEME_CSS is injected via st.markdown("<style>…</style>", unsafe_allow_html=True).
+  Streamlit keeps <style> (it strips <script>), so all glass + keyframe effects
+  render on Cloud. backdrop-filter / Google Fonts degrade gracefully (tinted
+  cards + system fonts) if a sandbox blocks them — never a crash.
 - The "alive" feel (pulsing LEDs, breathing LIVE badge, scan sweep, marquee
   ticker) is 100% CSS keyframes -> reliable.
-- The audio chime is a self-contained Web-Audio component (components.v1.html),
-  gated behind a sidebar toggle and played on a real click gesture -> guaranteed
-  to sound (auto server-pushed beeps are not reliable in Streamlit's model).
 
-All HTML builders emit only classed tags + html.escape()d text (no inline CSS
-braces), so there are no f-string / CSS-brace collisions.
+FIXES in this revision:
+- The sidebar collapse-arrow icon was leaking its ligature name
+  ("keyboard_double_arrow_left") as visible text, because an over-broad
+  `[data-testid="stSidebar"] span { font-family: … !important }` rule forced the
+  icon span into a text font that can't render the ligature. The Sora font is
+  now scoped to *markdown* spans only, so Streamlit's own icon font renders the
+  arrow glyph again and the stray text is gone.
+- The audio "alert chime" sidebar toggle has been removed from the UI
+  (render_alert_chime_control is now an intentional no-op, kept so existing
+  page imports/calls stay valid without editing any page).
 """
 from __future__ import annotations
 
@@ -22,7 +27,6 @@ import html
 from typing import Iterable
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 # =============================================================================
 # Design tokens — Deep Ocean & Electric Cyan
@@ -88,14 +92,16 @@ h1,h2,h3,.hero-title,.stMarkdown h1,.stMarkdown h2,.stMarkdown h3{
   letter-spacing:1.4px;font-size:.68rem;color:var(--muted)!important;
 }
 
-/* sidebar */
+/* sidebar — NOTE: Sora is scoped to MARKDOWN text only, never to bare spans,
+   so icon-font ligatures (e.g. the collapse arrow) keep their icon font and
+   render as glyphs instead of leaking their ligature name as text. */
 [data-testid="stSidebar"]{
   background:linear-gradient(180deg,rgba(10,25,47,0.82),rgba(5,12,26,0.92))!important;
   border-right:1px solid var(--glass-border)!important;
   backdrop-filter:blur(14px) saturate(160%)!important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-[data-testid="stSidebar"] span{font-family:var(--fb)!important;}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span{font-family:var(--fb)!important;}
 [data-testid="stSidebarNav"] a{font-family:var(--fh)!important;border-radius:10px;}
 [data-testid="stSidebarNav"] a[aria-current="page"]{
   background:rgba(0,242,254,0.10)!important;color:var(--cyan)!important;
@@ -147,7 +153,7 @@ pre,.stCodeBlock,[data-testid="stCode"]{
   border-radius:12px!important;
 }
 
-/* map + audio iframes get a glowing cyan bezel that blends into the field */
+/* map + any embedded iframes get a glowing cyan bezel that blends into the field */
 section.main iframe{
   border:1px solid rgba(0,242,254,0.28)!important;border-radius:16px!important;
   box-shadow:0 8px 32px rgba(0,242,254,0.18)!important;background:#050c1a!important;
@@ -232,51 +238,14 @@ def ticker_html(items: Iterable[str]) -> str:
 
 
 # =============================================================================
-# Audio chime — self-contained Web Audio component (plays on a real click)
+# Audio chime — INTENTIONALLY DISABLED (removed from the UI)
 # =============================================================================
-_AUDIO_HTML = """
-<div style="font-family:'JetBrains Mono',monospace;display:flex;align-items:center;gap:12px;
- background:rgba(16,28,48,0.6);border:1px solid rgba(0,242,254,0.25);border-radius:12px;
- padding:8px 14px;color:#9fb3c8;font-size:12px;backdrop-filter:blur(8px)">
-  <span style="color:#00f2fe;font-size:15px">&#128276;</span>
-  <span>Alert chime</span>
-  <button id="chime" style="margin-left:auto;cursor:pointer;border:1px solid rgba(0,242,254,0.45);
-   background:rgba(0,242,254,0.10);color:#00f2fe;border-radius:8px;padding:5px 14px;
-   font-family:inherit;font-size:12px;letter-spacing:1px">&#9654; TEST</button>
-  <span id="chst" style="opacity:.6">click to arm &amp; play</span>
-</div>
-<script>
-(function(){
-  var ctx=null;
-  function blip(freq,start,dur,peak){
-    var o=ctx.createOscillator(), g=ctx.createGain();
-    o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
-    var t=ctx.currentTime+start;
-    g.gain.setValueAtTime(0.0001,t);
-    g.gain.exponentialRampToValueAtTime(peak,t+0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    o.start(t); o.stop(t+dur+0.02);
-  }
-  function chime(){
-    try{
-      ctx = ctx || new (window.AudioContext||window.webkitAudioContext)();
-      if(ctx.state==='suspended'){ctx.resume();}
-      blip(880,0.0,0.45,0.25); blip(1320,0.12,0.4,0.20);
-      var s=document.getElementById('chst'); if(s){s.textContent='chime ✓ armed';}
-    }catch(e){var s2=document.getElementById('chst'); if(s2){s2.textContent='audio blocked';}}
-  }
-  var b=document.getElementById('chime');
-  if(b){b.addEventListener('click',chime);}
-})();
-</script>
-"""
-
-
 def render_alert_chime_control() -> None:
-    """Sidebar toggle (default OFF); when ON, render the click-to-play chime."""
-    armed = st.sidebar.toggle("🔔 Alert chime", value=False, key="alert_chime_toggle")
-    if armed:
-        components.html(_AUDIO_HTML, height=58, scrolling=False)
+    """No-op. The audio "alert chime" sidebar toggle has been removed: it added
+    UI clutter with no real value, and an automatic server-pushed beep is not
+    reliable under Streamlit's rerun model. This function is kept as a stub so
+    the existing page imports/calls remain valid without editing any page."""
+    return
 
 
 # =============================================================================

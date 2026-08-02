@@ -1,6 +1,14 @@
 """
 Page 3 — Digest: Gemini-generated executive risk briefs.
 Pass C: glassmorphic theme + living header; LLM logic untouched.
+
+Audit-viewer note: the raw_llm_response column stores the VERBATIM model output
+(a faithful audit trail). The model cannot know its own version and hallucinates
+a value (e.g. "1.0.0") for the model_version field inside that JSON. The stored
+model_version COLUMN is the authoritative id (stamped in llm_engine), so the
+"View Latest Raw Response" viewer overrides that one field with the column value
+before rendering — the model's real words stay verbatim; only the unknowable id
+is corrected. This self-heals already-stored briefs without regeneration.
 """
 from __future__ import annotations
 
@@ -139,9 +147,22 @@ st.header("🔍 LLM Audit Trail")
 st.markdown("Every Gemini response is persisted in `risk_briefs.raw_llm_response` (JSON) for full auditability and replay.")
 st.metric("Total Audited LLM Calls", store.connection.execute("SELECT COUNT(*) FROM risk_briefs").fetchone()[0])
 if st.button("📋 View Latest Raw Response"):
-    raw = store.connection.execute("SELECT raw_llm_response FROM risk_briefs ORDER BY generated_at DESC LIMIT 1").fetchone()
-    if raw and raw[0]:
-        st.json(raw[0] if isinstance(raw[0], dict) else str(raw[0]))
+    # Fetch BOTH the verbatim raw blob AND the authoritative model_version column.
+    row = store.connection.execute(
+        "SELECT raw_llm_response, model_version FROM risk_briefs ORDER BY generated_at DESC LIMIT 1"
+    ).fetchone()
+    if row and row[0] is not None:
+        raw_val, true_model = row[0], row[1]
+        try:
+            parsed = json.loads(raw_val) if isinstance(raw_val, str) else dict(raw_val)
+            if isinstance(parsed, dict) and true_model:
+                # The model hallucinates its own version (e.g. "1.0.0"); show the
+                # real id from the stored column. Every other field stays verbatim.
+                parsed["model_version"] = true_model
+            st.json(parsed)
+        except Exception:
+            # If the blob is unexpectedly shaped, fall back to a verbatim display.
+            st.json(raw_val if isinstance(raw_val, (dict, list)) else str(raw_val))
     else:
         st.info("No raw responses stored yet.")
 

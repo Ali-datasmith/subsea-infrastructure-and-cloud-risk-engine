@@ -200,6 +200,13 @@ class RiskEngineStore:
         incident_ids = [str(iid) for iid in brief.related_incident_ids]
         zones = [z.value for z in brief.affected_zones]
         providers = [p.value for p in brief.affected_cloud_providers]
+        try:
+            _raw_obj = json.loads(raw_response)
+            if isinstance(_raw_obj, dict):
+                _raw_obj["model_version"] = brief.model_version
+                raw_response = json.dumps(_raw_obj)
+        except Exception:
+            pass
 
         self._con.execute(
             """

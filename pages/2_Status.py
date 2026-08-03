@@ -96,7 +96,7 @@ map_html = build_folium_map(
     center_lat=center_lat, center_lon=center_lon, zoom=int(round(zoom_level)),
     show_cables=show_cables, show_dc=show_dc, show_heat=show_heat, show_incidents=show_incidents,
 )
-components.html(map_html, height=720, scrolling=False)
+st.iframe(map_html, height=720)
 st.caption("Basemap: Folium + Leaflet · Carto dark matter · token-free · renders reliably inside Streamlit Cloud.")
 
 # =============================================================================

@@ -121,11 +121,17 @@ class RiskEngineStore:
         incidents_df = pl.DataFrame(rows)
         logger.debug("Prepared {} incident rows for Arrow transfer", len(rows))
 
-        # NOTE: table columns are JSON, so cast to ::JSON (NOT ::VARIANT — the old
-        # storage format rejects VARIANT and this matches the DDL).
+        # DELETE existing incidents first, then INSERT (reliable upsert pattern)
+        incident_ids = [str(inc.incident_id) for inc in incidents]
+        placeholders = ",".join(["?"] * len(incident_ids))
+        self._con.execute(
+            f"DELETE FROM cable_incidents WHERE incident_id IN ({placeholders})",
+            incident_ids
+        )
+
         self._con.execute(
             """
-            INSERT OR REPLACE INTO cable_incidents (
+            INSERT INTO cable_incidents (
                 incident_id, cable_id, fault_type, status, zone,
                 fault_location, detected_at, reported_by,
                 affected_segment_km, repair_vessel_assigned,
@@ -204,7 +210,7 @@ class RiskEngineStore:
             _raw_obj = json.loads(raw_response)
             if isinstance(_raw_obj, dict):
                 _raw_obj["model_version"] = brief.model_version
-                raw_response = json.dumps(_raw_obj)
+            raw_response = json.dumps(_raw_obj)
         except Exception:
             pass
 
@@ -323,8 +329,8 @@ class RiskEngineStore:
                 sc.cable_name,
                 COALESCE(
                     (SELECT ci.status FROM cable_incidents ci
-                     WHERE ci.cable_id = sc.cable_id
-                     ORDER BY ci.detected_at DESC LIMIT 1),
+                    WHERE ci.cable_id = sc.cable_id
+                    ORDER BY ci.detected_at DESC LIMIT 1),
                     'active'
                 ) AS status,
                 ST_X(lp_src.location_geom) AS source_lon,
@@ -513,7 +519,7 @@ class RiskEngineStore:
                 WHERE sampled_at < current_timestamp - INTERVAL '{retention_days}' DAY
                 """
             )
-        logger.info("Pruned {} latency metrics older than {} days", pruned, retention_days)
+            logger.info("Pruned {} latency metrics older than {} days", pruned, retention_days)
         return pruned
 
     # =========================================================================
@@ -543,7 +549,7 @@ class RiskEngineStore:
             INSERT OR IGNORE INTO news_risk_signals
                 (news_id, source, title, link, published_at, zone, severity, matched_keywords, raw_payload)
             SELECT news_id::UUID, source, title, link, published_at, zone, severity,
-                   matched_keywords, raw_payload::JSON
+                matched_keywords, raw_payload::JSON
             FROM df
             """
         )
@@ -577,11 +583,11 @@ class RiskEngineStore:
             """
             INSERT INTO weather_risk_signals
                 (sample_id, cable_id, zone, sample_lat, sample_lon, sampled_at,
-                 wind_speed_kmh, wind_gust_kmh, wave_height_m, precipitation_mm,
-                 weather_fault_probability, repair_vessel_delayed, raw_payload)
+                wind_speed_kmh, wind_gust_kmh, wave_height_m, precipitation_mm,
+                weather_fault_probability, repair_vessel_delayed, raw_payload)
             SELECT sample_id::UUID, cable_id, zone, sample_lat, sample_lon, sampled_at,
-                   wind_speed_kmh, wind_gust_kmh, wave_height_m, precipitation_mm,
-                   weather_fault_probability, repair_vessel_delayed, raw_payload::JSON
+                wind_speed_kmh, wind_gust_kmh, wave_height_m, precipitation_mm,
+                weather_fault_probability, repair_vessel_delayed, raw_payload::JSON
             FROM df
             """
         )
@@ -621,21 +627,21 @@ class RiskEngineStore:
                 )
                 INSERT INTO cable_risk_scores
                     (cable_id, zone, incident_score, weather_score, news_score,
-                     composite_score, max_news_severity, repair_delayed, computed_at)
+                    composite_score, max_news_severity, repair_delayed, computed_at)
                 SELECT sc.cable_id, sc.zone,
                     COALESCE(inc.incident_score, 0),
                     COALESCE(wz.weather_score, 0),
                     COALESCE(nz.news_score, 0),
                     LEAST(1.0, 0.5 * COALESCE(inc.incident_score, 0)
-                               + 0.3 * COALESCE(wz.weather_score, 0)
-                               + 0.4 * COALESCE(nz.news_score, 0)),
+                                + 0.3 * COALESCE(wz.weather_score, 0)
+                                + 0.4 * COALESCE(nz.news_score, 0)),
                     nz.max_news_severity,
                     COALESCE(wz.repair_delayed, FALSE),
                     current_timestamp
                 FROM subsea_cables sc
                 LEFT JOIN inc ON inc.cable_id = sc.cable_id
-                LEFT JOIN wz  ON wz.zone = sc.zone
-                LEFT JOIN nz  ON nz.zone = sc.zone
+                LEFT JOIN wz ON wz.zone = sc.zone
+                LEFT JOIN nz ON nz.zone = sc.zone
                 """
             )
             count = self._con.execute("SELECT COUNT(*) FROM cable_risk_scores").fetchone()[0]
@@ -650,7 +656,7 @@ class RiskEngineStore:
         result = self._con.execute(
             """
             SELECT zone, wave_height_m, wind_gust_kmh, wind_speed_kmh,
-                   precipitation_mm, weather_fault_probability, repair_vessel_delayed, sampled_at
+                precipitation_mm, weather_fault_probability, repair_vessel_delayed, sampled_at
             FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY zone ORDER BY sampled_at DESC) AS rn
                 FROM weather_risk_signals
@@ -677,7 +683,7 @@ class RiskEngineStore:
         result = self._con.execute(
             """
             SELECT cable_id, zone, incident_score, weather_score, news_score,
-                   composite_score, max_news_severity, repair_delayed
+                composite_score, max_news_severity, repair_delayed
             FROM cable_risk_scores
             ORDER BY composite_score DESC
             """

@@ -1,4 +1,4 @@
-<img width="1024" height="572" alt="image" src="https://github.com/user-attachments/assets/adfc77f4-bc6c-4d5f-87bc-2051a5090a10" />
+<img width="1024" height="254" alt="image" src="https://github.com/user-attachments/assets/cc774b54-929f-4587-996a-ecce451303c3" />
 
 
 # Subsea Infrastructure & Cloud Risk Engine
@@ -21,6 +21,7 @@
 
 ## 🎬 Demo Video (Loom)
 https://github.com/user-attachments/assets/041994cd-3658-4ca6-86b7-540aca5f0137
+
 ---
 
 ## Overview
@@ -95,6 +96,9 @@ No single free, real-time feed connects "cable X is degraded" to "cloud region Y
 
 ```text
 subsea-infrastructure-and-cloud-risk-engine/
+├── .github/
+│   └── workflows/
+│       └── ci.yml         # GitHub Actions continuous integration
 ├── app.py                 # Home — system status + intelligence basis (glass shell)
 ├── pages/
 │   ├── 1_Input.py         # Feed config, live feeds, demo injection, quarantine viewer
@@ -111,9 +115,12 @@ subsea-infrastructure-and-cloud-risk-engine/
 │   ├── llm_engine.py      # Gemini structured risk brief generation
 │   ├── theme.py           # "Deep Ocean & Electric Cyan" glass theme + living UI
 │   └── viz_layers.py      # Folium/Leaflet neon map layer construction
+├── tests/                 # Pytest suite (37 automated tests)
 ├── ddl.sql                # DuckDB schema definitions
 ├── requirements.txt       # Python dependencies
+├── requirements-dev.txt   # Dev dependencies (pytest)
 ├── pyproject.toml         # Project metadata / build config
+├── pytest.ini             # Pytest configuration
 └── README.md
 ```
 
@@ -215,6 +222,26 @@ All signals are stored in DuckDB with native `GEOMETRY`/`JSON` support and H3-ba
 - **Structured JSON logging** via `loguru` throughout ingestion and processing.
 - **Pipeline observability panel** on the Input page, surfacing feed health and quarantine activity.
 - **LLM audit trail** on the Digest page — every Gemini request/response is retained for review, alongside risk brief history.
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+The project includes a comprehensive automated test suite to ensure data integrity, pipeline resilience, and LLM contract compliance. All tests run automatically via GitHub Actions on every push to `main`.
+
+**37 passing tests** across 6 core modules:
+- **`test_schemas.py`**: Pydantic edge validation, strict ingestion contracts, and LLM output schemas.
+- **`test_data_engine.py`**: Polars LazyFrame transforms, Pandera quality gates, and quarantine logic.
+- **`test_db_engine.py`**: DuckDB spatial joins, H3 aggregation, composite risk scoring math, and **idempotent upserts** (proven via `DELETE + INSERT` pattern).
+- **`test_ingestion.py`**: Async `httpx` + `tenacity` retry logic, degrade-by-design orchestration, and malformed payload quarantining.
+- **`test_free_feeds.py`**: Open-Meteo marine scoring, Google News RSS parsing, and severity escalation logic.
+- **`test_llm_engine.py`**: Gemini structured-output contract validation and JSON fallback parsing.
+
+**Run locally:**
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest -v
+```
 
 ---
 

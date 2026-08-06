@@ -3,11 +3,12 @@
 
 # Subsea Infrastructure & Cloud Risk Engine
 
-[![CI](https://github.com/Ali-datasmith/subsea-infrastructure-and-cloud-risk-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Ali-datasmith/subsea-infrastructure-and-cloud-risk-engine/actions)
-
 **A Streamlit decision-support dashboard that answers one question: given current subsea cable health, which cloud regions/providers are at elevated risk of degraded performance or isolation — and what should you do about it?**
 
 <p align="center">
+  <a href="https://github.com/Ali-datasmith/subsea-infrastructure-and-cloud-risk-engine/actions">
+    <img alt="CI" src="https://github.com/Ali-datasmith/subsea-infrastructure-and-cloud-risk-engine/actions/workflows/ci.yml/badge.svg">
+  </a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white">
   <img alt="Streamlit" src="https://img.shields.io/badge/streamlit-multipage-FF4B4B?logo=streamlit&logoColor=white">
   <img alt="Polars" src="https://img.shields.io/badge/polars-LazyFrame-CD792C">
